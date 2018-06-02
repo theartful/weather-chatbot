@@ -38,3 +38,25 @@ pool.connect(function (err, client, done) {
     });
 })
 
+webhookFunction = function(req, res) {
+	// get user prefrences
+    let userId = req.body.originalDetectIntentRequest.payload.data.sender.id;
+    let query = `SELECT * FROM users_prefs WHERE user_id='${userId}';`;
+   	pool.query(query, (err, result) => {
+        if (err) console.log(err);
+        makeDecision(req, result.rows[0], res);
+    });
+}
+
+function makeDecision(req, userPrefs, res) {
+	res.json({
+		"payload": {
+			"facebook": {
+				"text": "Hello, world"
+			}
+		}
+	});
+}
+
+server.post('/webhook', webhookFunction);
+
