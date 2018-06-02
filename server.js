@@ -10,6 +10,8 @@ const apiKey = '5b30125498a6176dd33bada39617b7d8';
 
 const port = process.env.PORT || 3000;
 
+var constants = require('./constants.js');
+
 // create server
 const server = express();
 server.use(bodyParser.urlencoded( {
@@ -49,13 +51,80 @@ webhookFunction = function(req, res) {
 }
 
 function makeDecision(req, userPrefs, res) {
+	
+    let intent = req.body.queryResult.intent.displayName;
+    let userId = req.body.originalDetectIntentRequest.payload.data.sender.id;
+
+    if(!userPrefs) {
+        console.log('User not registered');
+        let query = `INSERT INTO users_prefs (user_id) VALUES ('${userId}')`;
+        pool.query(query);
+    }
+
+    var response;
+    switch(intent) {
+    	case 'weather':
+            getWeatherResponse(req.body.queryResult.parameters, userPrefs, (response) => {
+                res.json({ fulfillmentText: response});
+            });
+    	break;
+    }
+
+    /*
 	res.json({
 		"payload": {
 			"facebook": {
 				"text": "Hello, world"
 			}
 		}
-	});
+    });
+    */
+}
+
+function getWeatherResponse(parameters, userPrefs, callback) {
+	let city = userPrefs.city;
+
+	if(parameters && parameters['geo-city'])
+		city = parameters['geo-city'];
+
+	weather = weatherByCity(city, (weather) => {
+		callback(formatWeatherResponse(weather));
+	})
+}
+
+function formatWeatherResponse(weather) {
+    if(!weather || !weather.main)
+      return constants.ERROR_MES;
+
+    if(!weather.name || !weather.main || !weather.main.temp)
+      return constants.ERROR_MES;
+ 
+    var response = `The temparature now in ${weather.name} is ${weather.main.temp} celcius.`;  
+    let w = weather.weather[0];
+
+    let weatherId = w['id'];
+    let weatherDisc = w["description"];
+
+    if(weatherId >= 200 && weatherId < 700) {       
+        response += ` And there might be a ${weatherDisc}.`;
+    }
+    if(weatherId >= 700 && weatherId <= 711 || 
+        weatherId >= 741 && weatherId <= 761 ) {         
+        response += ` And the atmosphere is ${weatherDisc}y.`;
+    }
+    if(weatherId == 721) {          
+        response += ` And the atmosphere is hazy.`;
+    }
+    if(weatherId == 731) {          
+        response += ` And the atmosphere is sandy with dust whirls.`;
+    }
+    if(weatherId == 800) {          
+        response += ` And the sky is clear today.`;
+    }
+    if(weatherId > 800) {
+        response += ` And the sky has ${weatherDisc}.`; 
+    }
+    return response;
 }
 
 server.post('/webhook', webhookFunction);
