@@ -51,9 +51,16 @@ webhookFunction = function(req, res) {
 }
 
 function makeDecision(req, userPrefs, res) {
-	
-    let intent = req.body.queryResult.intent.displayName;
-    let userId = req.body.originalDetectIntentRequest.payload.data.sender.id;
+    
+    let intent = '';
+    let userId = '0';
+    if(req.body) {
+        if(req.body.queryResult && req.body.queryResult.intent && req.body.queryResult.intent.displayName)
+            intent = req.body.queryResult.intent.displayName;
+        if(req.body.originalDetectIntentRequest && req.body.originalDetectIntentRequest.payload &&
+            req.body.originalDetectIntentRequest.payload.data && req.body.originalDetectIntentRequest.payload.data.sender)
+            userId = req.body.originalDetectIntentRequest.payload.data.sender.id;
+    }
 
     if(!userPrefs) {
         console.log('User not registered');
@@ -126,6 +133,20 @@ function formatWeatherResponse(weather) {
     }
     return response;
 }
+
+function weatherByCity(city, callback) {
+    let url = `http://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}`;
+    let weather = null;
+    request(url, (err, response, body) => {
+        if(err) {
+            weather = null;
+        } else {
+            weather = JSON.parse(body);
+        }
+        callback(weather);
+    });
+}
+
 
 server.post('/webhook', webhookFunction);
 
