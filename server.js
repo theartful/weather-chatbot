@@ -68,35 +68,83 @@ function makeDecision(req, userPrefs, res) {
         pool.query(query);
     }
 
-    var response;
-    switch(intent) {
-    	case 'weather':
-            getWeatherResponse(req.body.queryResult.parameters, userPrefs, (response) => {
-                res.json({ fulfillmentText: response});
-            });
-    	break;
+    var parameters = req.body.queryResult.parameters;
+
+    if(intent === 'naked-location' || intent === 'location-sent') {
+        console.log('Naked location');
+        if(intent === 'location-sent') {
+            parameters['lat'] = req.body.originalDetectIntentRequest.payload.data.postback.data.lat;
+            parameters['long'] = req.body.originalDetectIntentRequest.payload.data.postback.data.long; 
+            console.log(parameters['lat'] + " " + parameters['long']);
+        } 
+        if(userPrefs.context === constants.CONTEXT_LOC) {
+            intent = 'location';
+        } else {
+            intent = 'weather';
+        }
     }
 
-    /*
-	res.json({
+    switch(intent) {
+        case 'weather':
+            getWeatherResponse(req.body.queryResult.parameters, userPrefs, (response) => sendResponse(response, res));
+            break;
+        case 'location':
+            getLocationResponse(req.body.queryResult.parameters, userPrefs, (response) => sendResponse(response, res));
+            break;;
+        case 'outfit':
+            getOutfitResponse(req.body.queryResult.parameters, userPrefs, (response) => sendResponse(response, res));
+        break;
+        case 'outfit-suggestion':
+            getOutfitSuggestion(req.body.queryResult.parameters, userPrefs, (response) => sendResponse(response, res));
+        break;
+
+    }
+    
+}
+
+function sendResponse(response, res) {
+    res.json({
 		"payload": {
 			"facebook": {
-				"text": "Hello, world"
+                "text": response,
+                "quick_replies":[
+                    {
+                      "content_type":"location"
+                    }
+                  ]
 			}
 		}
     });
-    */
 }
 
 function getWeatherResponse(parameters, userPrefs, callback) {
-	let city = userPrefs.city;
-
-	if(parameters && parameters['geo-city'])
-		city = parameters['geo-city'];
-
-	weather = weatherByCity(city, (weather) => {
-		callback(formatWeatherResponse(weather));
-	})
+	
+    if(parameters['lat'] && parameters['long']) {
+        weatherByCoordinates(parameters['long'], parameters['lat'], (weather) => {
+            callback(formatWeatherResponse(weather));
+        });
+    } else {
+        let city = userPrefs.city;
+        let userHasNoLoc = !userPrefs.city && !userPrefs.latitude;
+        if(parameters && parameters['geo-city'])
+            city = parameters['geo-city'];
+        else if(!city && userHasNoLoc) {
+            callback('Please tell the city you live in.');
+            context = constants.CONTEXT_LOC;
+            setContext(constants.CONTEXT_LOC, userPrefs);
+            return;
+        } else if(!city) {
+            weatherByCoordinates(userPrefs.longitude, userPrefs.latitude, (weather) => {
+                callback(formatWeatherResponse(weather));
+            });        
+        }
+        else {
+            weatherByCity(city, (weather) => {
+                callback(formatWeatherResponse(weather));
+            })
+        }
+    }
+    setContext(constants.CONTEXT_WEATHER, userPrefs);
 }
 
 function formatWeatherResponse(weather) {
@@ -134,6 +182,38 @@ function formatWeatherResponse(weather) {
     return response;
 }
 
+function getLocationResponse(parameters, userPrefs, callback) {
+    if(!parameters) {
+        return constants.ERROR_MES;
+    }
+    if(parameters['long'] && parameters['lat']) {
+        let query = `UPDATE users_prefs SET city=NULL, longitude=${parameters['long']}, latitude=${parameters['lat']} WHERE user_id='${userPrefs.user_id}';`;
+        pool.query(query, (err, result) => {
+            if (err) console.log(err);
+            callback(`Your coordinates have been updated. I will memorize that.`);
+        });
+        return;
+    }
+    let city = parameters['geo-city'];
+    let country = parameters['geo-country'];
+    let user_id = userPrefs.user_id;
+    console.log(city);
+    console.log(country);
+
+    if(!city) {
+        callback('Tell me the city you live in, or pin it from the map.');
+        setContext(constants.CONTEXT_LOC, userPrefs);
+        return;
+    }
+
+    let query = `UPDATE users_prefs SET city='${city}', longitude=NULL, latitude=NULL WHERE user_id='${user_id}';`;
+    pool.query(query, (err, result) => {
+        if (err) console.log(err);
+        callback(`You live in ${city}. I will memorize that.`);
+    });
+    setContext(constants.CONTEXT_WEATHER, userPrefs);
+}
+
 function weatherByCity(city, callback) {
     let url = `http://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}`;
     let weather = null;
@@ -147,6 +227,147 @@ function weatherByCity(city, callback) {
     });
 }
 
+function weatherByCoordinates(longitude, latitude, callback) {
+    console.log(longitude + " " + latitude);
+    let url = `http://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&units=metric&appid=${apiKey}`;
+    let weather = null;
+    request(url, (err, response, body) => {
+        if(err) {
+            weather = null;
+        } else {
+            weather = JSON.parse(body);
+        }
+        callback(weather);
+    });
+} 
+
+function getWeather(params, callback) {
+    if(params.longitude) {
+        weatherByCoordinates(params.longitude, params.latitude, callback);
+        return;
+    }
+    if(params.long) {
+        weatherByCoordinates(params.long, params.lat, callback);
+        return;
+    }
+    if(params.city) {
+        weatherByCity(params.city, callback);
+        return;
+    }
+}
+
+function setContext(context, userPrefs) {
+    if(context === userPrefs.context) return;
+    let query = `UPDATE users_prefs SET context='${context}' WHERE user_id='${userPrefs.user_id}';`;
+    pool.query(query, (err, result) => {
+        if (err) console.log(err);
+    });
+    console.log("Changing context to " + context);
+}
+
+function getOutfitResponse(parameters, userPrefs, callback) {
+    let city = userPrefs.city;
+    let long = userPrefs.longitude;
+    let lat = userPrefs.latitude;
+    let outfit = parameters['clothes'];
+    if(!city && !lat && !long) {
+        callback('Please tell me what city you live in.');
+        setContext(constants.CONTEXT_LOC, userPrefs);
+        return;
+    }
+
+    getWeather(userPrefs, (weather) => {
+        if(!weather || !weather.main || !weather.main.temp) {
+            callback(constants.ERROR_MES);
+            return;
+        }
+        var appropriate = false;
+        let tmp = weather.main.temp;
+
+        if(tmp > 30) {
+            if(constants.HOT_WEATHER.indexOf(outfit) > -1) {
+                appropriate = true;
+            }
+        } else if (tmp > 20) {
+            if(constants.WARM_WEATHER.indexOf(outfit) > -1) {
+                appropriate = true;
+            }
+        } else {
+            if(constants.COLD_WEATHER.indexOf(outfit) > -1) {
+                appropriate = true;
+            }
+        }
+
+        weather.weather.forEach(element => {
+            let weatherId = element['id'];
+            if(weatherId > 200 && weatherId < 600) {
+                if(constants.RAIN.indexOf(outfit) > -1) {
+                    appropriate = true;
+                }
+            } else if (weatherId < 700) {
+                if(constants.SNOW.indexOf(outfit) > -1) {
+                    appropriate = true;
+                }
+            } else if (weatherId >= 800) {
+                if(constants.SUN.indexOf(outfit) > -1) {
+                    appropriate = true;
+                }
+            }
+        });
+        
+        if(appropriate) {
+            callback(constants.OUTFIT_YES[Math.floor(Math.random()*constants.OUTFIT_YES.length)]);
+        } else {
+            callback(constants.OUTFIT_NO[Math.floor(Math.random()*constants.OUTFIT_NO.length)]); 
+        }  
+    });
+    setContext(constants.CONTEXT_WEATHER, userPrefs);
+}
+
+function getOutfitSuggestion(parameters, userPrefs, callback) {
+    setContext(constants.CONTEXT_WEATHER, userPrefs);
+
+    let city = userPrefs.city;
+    let long = userPrefs.longitude;
+    let lat = userPrefs.latitude;
+    if(!city && !lat && !long) {
+        callback('Please tell me what city you live in.');
+        setContext(constants.CONTEXT_LOC, userPrefs);
+        return;
+    }
+
+    getWeather(userPrefs, (weather) => {
+        if(!weather || !weather.main || !weather.main.temp) {
+            callback(constants.ERROR_MES);
+            return;
+        }
+
+        var done = false;
+        weather.weather.forEach(element => {
+            let weatherId = element['id'];
+            if(weatherId > 200 && weatherId < 600) {
+                callback("You should bring an umbrella. It's raining!");
+                done = true;
+            } else if (weatherId < 700) {
+                callback("You should wear heavy clothes. Bring a jacket with you, it's snowing!");
+                done = true;;
+            } 
+        });
+        if(done) return;
+        let tmp = weather.main.temp;
+
+        if(tmp > 30) {
+            callback("It's hot out there! You should wear a shirt");
+            return;
+        } else if (tmp > 20) {
+            callback('The weather is warm. Maybe put on a sleeve shirt')
+            return;
+        } else {
+            callback('It\'s cold. Put on a jacket');
+            return;
+        }
+    });
+}
 
 server.post('/webhook', webhookFunction);
 
