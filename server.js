@@ -118,33 +118,34 @@ function sendResponse(response, res) {
 }
 
 function getWeatherResponse(parameters, userPrefs, callback) {
-	
+    setContext(constants.CONTEXT_WEATHER, userPrefs);
+
     if(parameters['lat'] && parameters['long']) {
         weatherByCoordinates(parameters['long'], parameters['lat'], (weather) => {
             callback(formatWeatherResponse(weather));
-        });
-    } else {
-        let city = userPrefs.city;
-        let userHasNoLoc = !userPrefs.city && !userPrefs.latitude;
-        if(parameters && parameters['geo-city'])
-            city = parameters['geo-city'];
-        else if(!city && userHasNoLoc) {
-            callback('Please tell the city you live in.');
-            context = constants.CONTEXT_LOC;
-            setContext(constants.CONTEXT_LOC, userPrefs);
             return;
-        } else if(!city) {
-            weatherByCoordinates(userPrefs.longitude, userPrefs.latitude, (weather) => {
-                callback(formatWeatherResponse(weather));
-            });        
-        }
-        else {
-            weatherByCity(city, (weather) => {
-                callback(formatWeatherResponse(weather));
-            })
-        }
+        });
+        return;
     }
-    setContext(constants.CONTEXT_WEATHER, userPrefs);
+    let city = userPrefs.city;
+    if(parameters && parameters['geo-city'])
+        city = parameters['geo-city'];
+    if(!city && !userPrefs.city && !userPrefs.latitude) {
+        callback('Please tell the city you live in.');
+        context = constants.CONTEXT_LOC;
+        setContext(constants.CONTEXT_LOC, userPrefs);
+        return;
+    } 
+    if(!city) {
+        weatherByCoordinates(userPrefs.longitude, userPrefs.latitude, (weather) => {
+            callback(formatWeatherResponse(weather));
+        });        
+    }
+    else {
+        weatherByCity(city, (weather) => {
+            callback(formatWeatherResponse(weather));
+        })
+    }
 }
 
 function formatWeatherResponse(weather) {
@@ -330,6 +331,7 @@ function getOutfitSuggestion(parameters, userPrefs, callback) {
     let city = userPrefs.city;
     let long = userPrefs.longitude;
     let lat = userPrefs.latitude;
+
     if(!city && !lat && !long) {
         callback('Please tell me what city you live in.');
         setContext(constants.CONTEXT_LOC, userPrefs);
@@ -368,6 +370,4 @@ function getOutfitSuggestion(parameters, userPrefs, callback) {
         }
     });
 }
-
 server.post('/webhook', webhookFunction);
-
